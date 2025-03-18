@@ -6,7 +6,8 @@ describe("Futures Contract", function () {
   let futures: Contract;
   let stableCoin: Contract;
   let priceFeedMock: Contract;
-  //let owner: Signer;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  let owner: Signer;
   let trader1: Signer;
   let trader2: Signer;
 
