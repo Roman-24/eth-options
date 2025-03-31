@@ -7,7 +7,7 @@ import { parseUnits, Contract, Signer, MaxUint256 } from "ethers";
  * and uses MaxUint256 for approvals so we never get an "ERC20InsufficientAllowance" revert.
  */
 
-describe("Options (Cash-Settled Pool)", function () {
+describe("Options (Cash-Settled Pool, American Style)", function () {
   let options: Contract;
   let stable: Contract;
   let priceFeedMock: Contract;
@@ -19,7 +19,7 @@ describe("Options (Cash-Settled Pool)", function () {
   // We'll use 18 decimals for the stable token, matching 1e18 math in the contract
   const stableDecimals = 18;
 
-  // Price feed mock: "3000" => 3,000 * 1e8 => parseUnits("3000", 8)
+  // Mock price feed: "3000" => 3,000 * 1e8 => parseUnits("3000", 8)
   const initialPrice = parseUnits("3000", 8);
 
   beforeEach(async () => {
@@ -43,7 +43,7 @@ describe("Options (Cash-Settled Pool)", function () {
     priceFeedMock = await PriceFeed.deploy(initialPrice);
     await priceFeedMock.waitForDeployment();
 
-    // 4) Deploy the Options contract
+    // 4) Deploy the updated American-style Options contract
     const Options = await ethers.getContractFactory("Options");
     options = await Options.deploy(await stable.getAddress(), await priceFeedMock.getAddress());
     await options.waitForDeployment();
@@ -81,33 +81,31 @@ describe("Options (Cash-Settled Pool)", function () {
     await stable.connect(lp1).approve(await options.getAddress(), MaxUint256);
     await options.connect(lp1).provideLiquidity(deposit);
 
-    // Now buy the call from traderCall
-    // Approve max to avoid allowance issues
+    // Approve max for traderCall
     await stable.connect(traderCall).approve(await options.getAddress(), MaxUint256);
 
-    // strike=3000 (1e18), amount=2 (1e18) => collateral=6e39, but we have 1e24 minted => plenty
-    const strike = parseUnits("3000", 18);
-    const expiry = (await currentBlockTimestamp()) + 3600;
-    const amountCall = parseUnits("2", 18);
+    // Set an expiry well in the future
+    const expiry = (await currentBlockTimestamp()) + 7200; // 2 hours from now
 
-    // premium=2%*(3000*2)=120 => 120 * 1e18
-    // We'll just rely on the contract's logic. No big math needed here, but "120" in 1e18 => parseUnits("120", 18)
-    // We do not need to do the exact math for the test. The contract will do it, and we have enough allowance.
+    // e.g. strike=3000 (1e18), amount=2(1e18)
+    const strike = parseUnits("3000", stableDecimals);
+    const amountCall = parseUnits("2", stableDecimals);
+
+    // Trader buys the CALL option
     await options.connect(traderCall).buyOption(0, strike, expiry, amountCall);
 
-    // Move time forward
-    await ethers.provider.send("evm_increaseTime", [3600 + 10]);
+    // Increase time, but remain *before* expiry so we can still exercise
+    await ethers.provider.send("evm_increaseTime", [3600 + 10]); // ~1 hour
     await ethers.provider.send("evm_mine", []);
 
-    // Increase price => let's say 4000 => payoff= (4000-3000)*2=2000
+    // Increase price => let's say 4000 => payoff = (4000 - 3000) * 2 = 2000
     await priceFeedMock.setPrice(parseUnits("4000", 8));
 
     const balBefore = await stable.balanceOf(await traderCall.getAddress());
     await options.connect(traderCall).exerciseOption(0);
     const balAfter = await stable.balanceOf(await traderCall.getAddress());
-    const diff = balAfter - balBefore;
 
-    // Expect 2000 in 1e18
+    const diff = balAfter - balBefore;
     expect(diff).to.equal(parseUnits("2000", stableDecimals));
   });
 
@@ -121,17 +119,18 @@ describe("Options (Cash-Settled Pool)", function () {
     await stable.connect(traderPut).approve(await options.getAddress(), MaxUint256);
 
     // strike=3000, amount=1 => collateral=3000 => we have enough
-    const strike = parseUnits("3000", 18);
+    const strike = parseUnits("3000", stableDecimals);
     const expiry = (await currentBlockTimestamp()) + 3600;
-    const amountPut = parseUnits("1", 18);
+    const amountPut = parseUnits("1", stableDecimals);
 
     await options.connect(traderPut).buyOption(1, strike, expiry, amountPut);
 
-    // After expiry => price=3500 => put worthless => call expireOption
+    // After expiry => price=3500 => the PUT is out-of-the-money => worthless
     await ethers.provider.send("evm_increaseTime", [3600 + 1]);
     await ethers.provider.send("evm_mine", []);
     await priceFeedMock.setPrice(parseUnits("3500", 8));
 
+    // Release collateral
     await options.expireOption(0);
 
     const locked = await options.lockedCollateral();
@@ -147,16 +146,16 @@ describe("Options (Cash-Settled Pool)", function () {
     // TraderCall => also approve max
     await stable.connect(traderCall).approve(await options.getAddress(), MaxUint256);
 
-    const strike = parseUnits("3000", 18);
+    const strike = parseUnits("3000", stableDecimals);
     const expiry = (await currentBlockTimestamp()) + 3600;
-    const amt = parseUnits("1", 18);
+    const amt = parseUnits("1", stableDecimals);
 
     await expect(options.connect(traderCall).buyOption(0, strike, expiry, amt)).to.be.revertedWith(
-      "Not enough liquidity to cover max payoff",
+      "Not enough pool liquidity",
     );
   });
 
-  // Helper function
+  // Helper function: get current block timestamp
   async function currentBlockTimestamp(): Promise<number> {
     const block = await ethers.provider.getBlock("latest");
     return block.timestamp;
