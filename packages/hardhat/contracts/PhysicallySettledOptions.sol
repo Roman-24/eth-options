@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 /**
- * @title SimplePhysicallySettledOptions
+ * @title PhysicallySettledOptions
  * @notice A minimal example allowing both calls and puts on ETH, physically settled with stablecoins.
  *
  * Liquidity providers deposit ETH as collateral for calls, and stablecoins as collateral for puts.
